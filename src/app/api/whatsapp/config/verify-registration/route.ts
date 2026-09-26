@@ -100,8 +100,9 @@ export async function GET() {
   const errors: string[] = []
 
   // 1. Phone metadata
+  let phoneInfo
   try {
-    await verifyPhoneNumber({
+    phoneInfo = await verifyPhoneNumber({
       phoneNumberId: config.phone_number_id,
       accessToken,
     })
@@ -140,6 +141,22 @@ export async function GET() {
     )
   }
 
+  // Meta test numbers are pre-registered by Meta and expose no 2-step PIN.
+  // When phone metadata and WABA subscription are verified, auto-heal registered_at.
+  const isTestNumber =
+    phoneInfo?.verified_name === 'Test Number' ||
+    Boolean(phoneInfo?.display_phone_number?.startsWith('+1 555'))
+
+  let registeredAt = config.registered_at ?? null
+  if (isTestNumber && checks.phone_metadata_ok && (checks.waba_subscribed_to_app ?? false) && !registeredAt) {
+    registeredAt = new Date().toISOString()
+    await supabase
+      .from('whatsapp_config')
+      .update({ registered_at: registeredAt, last_registration_error: null })
+      .eq('id', config.id)
+    checks.locally_marked_registered = true
+  }
+
   const live =
     checks.phone_metadata_ok &&
     (checks.waba_subscribed_to_app ?? false) &&
@@ -150,7 +167,7 @@ export async function GET() {
     checks,
     errors,
     last_registration_error: config.last_registration_error ?? null,
-    registered_at: config.registered_at ?? null,
+    registered_at: registeredAt,
     subscribed_apps_at: config.subscribed_apps_at ?? null,
   })
 }
